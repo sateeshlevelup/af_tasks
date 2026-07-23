@@ -1,0 +1,58 @@
+name: Deploy DAGs to Cloud Composer
+ 
+# WHEN does this run?
+#   - on every push to main that changes something under dags/
+#   - or manually, from the Actions tab (workflow_dispatch)
+on:
+  push:
+    branches: ["main"]
+    paths: ["dags/**"]
+  workflow_dispatch: {}
+ 
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Get your repo code onto the runner
+      - name: Checkout repository
+        uses: actions/checkout@v4
+ 
+      # 2. Fail fast: if any DAG has a Python syntax error, stop BEFORE we touch
+      #    Composer. (This is a cheap check — it does not need Airflow installed.)
+      - name: Syntax-check all DAGs
+        run: python -m compileall -q dags
+ 
+      # 3. Log in to Google Cloud using the service-account key you stored as a
+      #    GitHub secret named GCP_SA_KEY.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+ 
+      # 4. Install the gcloud CLI on the runner
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+ 
+      # 5. Ask Composer where its DAGs bucket is (returns gs://<bucket>/dags).
+      #    COMPOSER_ENV and COMPOSER_REGION are GitHub repo *variables*.
+      - name: Find the Composer DAGs bucket
+        id: bucket
+        run: |
+          DAGS_PREFIX=$(gcloud composer environments describe "${{ vars.COMPOSER_ENV }}" \
+            --location "${{ vars.COMPOSER_REGION }}" \
+            --format="value(config.dagGcsPrefix)")
+          echo "Composer DAGs path is: $DAGS_PREFIX"
+          echo "dags_prefix=$DAGS_PREFIX" >> "$GITHUB_OUTPUT"
+ 
+      # 6. Copy the dags/ folder up to the bucket. Composer auto-loads them.
+      #    We skip Python cache junk. New/changed files are uploaded.
+      - name: Sync dags/ to the Composer bucket
+        run: |
+          gcloud storage rsync dags "${{ steps.bucket.outputs.dags_prefix }}" \
+            --recursive \
+            --exclude=".*/__pycache__/.*|.*\.pyc$"
+ 
+          # OPTIONAL — exact mirror. Uncomment to ALSO delete files from the bucket
+          # that you deleted from the repo. Powerful but unforgiving: it removes
+          # anything under the bucket's dags/ that is not in your repo.
+          #   --delete-unmatched-destination-objects
