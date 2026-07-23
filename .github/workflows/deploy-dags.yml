@@ -5,7 +5,7 @@ name: Deploy DAGs to Cloud Composer
 #   - or manually, from the Actions tab (workflow_dispatch)
 on:
   push:
-    branches: ["main"]
+    branches: ["main","master"]
     paths: ["dags/**"]
   workflow_dispatch: {}
  
